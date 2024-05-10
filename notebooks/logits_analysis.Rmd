@@ -1,0 +1,185 @@
+---
+title: "logits_analysis"
+author: "Xueying Chen"
+date: "2024-05-06"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+## R Markdown
+```{r}
+library(readxl)
+library(ggplot2)
+library(tidyverse)
+library(gridExtra)
+library(stringr)
+library(RColorBrewer)
+library(ggsignif)
+library(ggpubr)
+library(caret)
+library(viridis)
+```
+
+```{r}
+path <- "/Users/chenxueying/Desktop/MLHC/mlhc_test_data_w_logits.xlsx"
+data <- read_excel(path, sheet = "Sheet1")
+data$type <- str_to_title(data$type)
+```
+
+
+## General distribution (Density Plots)
+
+```{r}
+data |> ggplot(aes(x = pred_logits_0, fill = factor(type), alpha = 0.5 ))+
+  #geom_histogram() +
+  theme_bw()+
+  geom_density() +
+  scale_fill_brewer(palette = "Dark2") +
+  labs(fill = "Gender") + 
+  guides(alpha = FALSE) +
+  facet_grid(~type) 
+  
+```
+
+```{r}
+
+data |> ggplot(aes(x = pred_logits_1, fill = factor(type), alpha = 0.5 ))+
+  #geom_histogram() +
+  geom_density() +
+  scale_fill_brewer(palette = "Dark2") +
+  theme_bw()+
+  labs(fill = "Gender", y = "Density") + 
+  guides(alpha = FALSE) +
+  facet_grid(~type) 
+  
+```
+
+
+```{r}
+data_long <- data |> select(pred_logits_0, pred_logits_1, type) |> 
+  pivot_longer(-type, names_to = "pred_type", values_to = "preds" )
+
+t <- t.test(
+  data_long$preds[data_long$type == "Baseline" & data_long$pred_type == "pred_logits_0"],
+  data_long$preds[data_long$type == "Female" & data_long$pred_type == "pred_logits_0"]
+)
+t$p.value
+
+
+t <- t.test(
+  data_long$preds[data_long$type == "Baseline" & data_long$pred_type == "pred_logits_0"],
+  data_long$preds[data_long$type == "Male" & data_long$pred_type == "pred_logits_0"]
+)
+t$p.value
+
+
+ks <- ks.test(
+  data_long$preds[data_long$type == "Female" & data_long$pred_type == "pred_logits_0"],
+  data_long$preds[data_long$type == "Male" & data_long$pred_type == "pred_logits_0"]
+)
+summary(ks)
+ks
+
+hist(data_long$preds[data_long$type == "Female" & data_long$pred_type == "pred_logits_0"])
+
+hist(data_long$preds[data_long$type == "Male" & data_long$pred_type == "pred_logits_0"])
+```
+
+
+
+```{r}
+data |> ggplot(aes(x = pred_logits_flipped_0, fill = factor(type), alpha = 0.5 ))+
+  #geom_histogram() +
+  theme_bw()+
+  geom_density() +
+  scale_fill_brewer(palette = "Set2") +
+  labs(fill = "Gender") + 
+  guides(alpha = FALSE) +
+  facet_grid(~type) 
+```
+
+```{r}
+data |> ggplot(aes(x = pred_logits_flipped_1, fill = factor(type), alpha = 0.5 ))+
+  #geom_histogram() +
+  theme_bw()+
+  geom_density() +
+  scale_fill_brewer(palette = "Set2") +
+  labs(fill = "Gender") + 
+  guides(alpha = FALSE) +
+  facet_grid(~type) 
+```
+## Abs val of logit differences
+
+```{r}
+data <- data |> mutate(pred_0_diff = abs(pred_logits_flipped_0 - pred_logits_0),
+                       pred_1_diff = abs(pred_logits_flipped_1 - pred_logits_1)) 
+
+data_long <- data |> select(pred_0_diff, pred_1_diff, type) |> 
+  pivot_longer(-type, names_to = "pred_type", values_to = "diff" )
+
+annot <-  t.test(
+  data_long$diff[data_long$type == "Baseline" & data_long$pred_type == "pred_0_diff"],
+  data_long$diff[data_long$type == "Female" & data_long$pred_type == "pred_0_diff"]
+)$p.value
+
+p <- data_long |> group_by(pred_type) |>
+  filter(type != "Baseline") |>
+  ggplot(aes(x = pred_type, y = diff, alpha = 0.95, fill = type)) +
+  scale_fill_brewer(palette = "Set2") +
+  guides(alpha = FALSE) +
+  theme_bw()+
+  geom_boxplot() +
+  labs(fill = "Prediction Type", y = "Logits Absolute Difference", x = "" )+ 
+  theme(panel.grid.major = element_blank(),  # Remove major grid lines
+        panel.grid.minor = element_blank()) 
+
+
+p + geom_pwc(
+     tip.length = 0,
+    method = "t_test", label = "p.adj.format",
+    bracket.nudge.y = -0.08
+  )
+summary(aov(diff~type+pred_type, data = data_long))
+
+```
+
+
+```{r}
+before <- as.matrix(table(data$pred, data$type))
+after <- as.matrix(table(data$pred_flipped, data$type))
+res <- chisq.test(before, after)
+print(res)
+```
+```{r}
+conf_matrix <- confusionMatrix(factor(data$label_int), factor(data$pred))
+df_cf <- as.data.frame(conf_matrix$table)
+# Plot confusion matrix
+ggplot(df_cf, aes(x = Prediction, y = Reference, fill = Freq)) +
+  geom_tile() +
+  scale_color_viridis(option = "D", aesthetics = "fill") +
+  theme_bw()+ 
+  theme(panel.grid.major = element_blank(),  # Remove major grid lines
+        panel.grid.minor = element_blank()) +
+  geom_text(aes(label = Freq), color = "white", size = 4) + 
+  labs(title = "Confusion Matrix Heatmap", fill = "Frequency")
+```
+
+```{r}
+conf_matrix_flipped <- confusionMatrix(factor(data$label_int), factor(data$pred_flipped))
+df_cf_flipped <- as.data.frame(conf_matrix_flipped$table)
+# Plot confusion matrix
+ggplot(df_cf_flipped, aes(x = Prediction, y = Reference, fill = Freq)) +
+  geom_tile() +
+  scale_color_viridis(option = "D", aesthetics = "fill") +
+  theme_bw()+ 
+  theme(panel.grid.major = element_blank(),  # Remove major grid lines
+        panel.grid.minor = element_blank()) +
+  geom_text(aes(label = Freq), color = "white", size = 4) + 
+  labs(title = "Confusion Matrix Heatmap", fill = "Frequency")
+```
+
+
+
